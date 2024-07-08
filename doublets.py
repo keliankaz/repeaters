@@ -3,7 +3,9 @@ import copy
 from catalog import Catalog
 from earthquake import EarthquakeCatalog
 import pandas as pd
+from typing import Optional
 from typing_extensions import Self
+from matplotlib import pyplot as plt
 
 class DoubletCatalog(EarthquakeCatalog):
     def __init__(self, file_name):
@@ -132,6 +134,16 @@ class DoubletCatalog(EarthquakeCatalog):
         new._toggle = i
         
         return new
+    
+    def plot_pairs(self, ax: Optional[plt.Axes] = None):
+        if ax is None:
+            _, ax = plt.subplots(figsize=(4,10))
+        
+        event1_event2 = [[row.Datetime, row.Datetime_2] for _, row in self.catalog.iterrows()]
+        rows = [[r,r] for r in range(len(self.catalog))]
+        
+        [ax.plot(t, r, marker='.', markersize=5, c='C0',lw=1, alpha=0.5) for t,r in zip(event1_event2, rows)]
+        ax.set(yticklabels=[], xlabel='Date')
     
 class DoubletSequences:
     def __init__(
