@@ -7,7 +7,7 @@ from typing import Optional
 from typing_extensions import Self
 from matplotlib import pyplot as plt
 
-class DoubletCatalog(EarthquakeCatalog):
+class RepeaterCatalog(EarthquakeCatalog):
     def __init__(self, file_name):
         _catalog = pd.read_csv(
             filepath_or_buffer=file_name,
@@ -145,7 +145,7 @@ class DoubletCatalog(EarthquakeCatalog):
         [ax.plot(t, r, marker='.', markersize=5, c='C0',lw=1, alpha=0.5) for t,r in zip(event1_event2, rows)]
         ax.set(yticklabels=[], xlabel='Date')
     
-class DoubletSequences:
+class RepeaterSequences:
     def __init__(
         self, 
         query_paired_catalog, base_catalog,
