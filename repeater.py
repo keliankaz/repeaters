@@ -171,7 +171,9 @@ class RepeaterSequences:
         if apply_same_completness is True:
             self.apply_same_completeness()
 
-    def apply_same_completeness(self):
+    def apply_same_completeness(self, remove_short_sequence=True):
+        
+        indices_where_too_short = []
         for i,pair in enumerate(self.sequences):
             seq1, seq2 = [pair["catalog_1"], pair["catalog_2"]]
             mc = np.max([seq1.mag_completeness,seq2.mag_completeness])
@@ -179,7 +181,17 @@ class RepeaterSequences:
             seq2.mag_completeness = mc
             pair["catalog_1"] = seq1
             pair["catalog_2"] = seq2
+            
+            if (
+                len(seq1) < self.minimum_number_of_events or 
+                len(seq2) < self.minimum_number_of_events
+            ):
+                indices_where_too_short.append(i)
+                
             self.sequences[i] = pair
+        
+        if remove_short_sequence is True:
+            self.sequences = [v for i,v in enumerate(self.sequences) if i not in indices_where_too_short]
     
     @staticmethod
     def mc_max_curvature(mag, magnitude_increment=0.1, max_curvature_correction=0.1):
