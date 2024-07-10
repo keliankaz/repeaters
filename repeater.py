@@ -8,11 +8,17 @@ from typing_extensions import Self
 from matplotlib import pyplot as plt
 
 class RepeaterCatalog(EarthquakeCatalog):
-    def __init__(self, file_name):
+    def __init__(
+        self, 
+        file_name,
+        min_time_delta_years=None,
+    ):
         _catalog = pd.read_csv(
             filepath_or_buffer=file_name,
             delim_whitespace=True,
         )
+        
+        self.raw_catalog = _catalog
         
         _catalog["Datetime"] = pd.to_datetime(_catalog["Date"] + " " + _catalog["Time"])
         _catalog["Datetime_2"] = pd.to_datetime(_catalog["Date_2"] + " " + _catalog["Time_2"])
@@ -24,38 +30,17 @@ class RepeaterCatalog(EarthquakeCatalog):
         _catalog['depth'] = _catalog['Depth_km']
         _catalog['mag'] = _catalog['Mag']
         
+        self.min_time_delta_years = min_time_delta_years
+        if self.min_time_delta_years is not None:
+            _catalog = _catalog.loc[
+                np.abs((_catalog["Datetime_2"] - _catalog["Datetime"])/np.timedelta64(1,'Y')) > self.min_time_delta_years
+            ]
+            _catalog = _catalog.reset_index(drop=True)
+        
         super().__init__(_catalog)
         
         self._catalog = _catalog
         self._toggle = 0
-        
-        
-    @staticmethod
-    def get_pair(t, M, M_ref, max_magnitude_delta, min_time_delta, shadow_time):
-        
-        indices = list(range(len(t)))
-        shuffled_indices = np.random.shuffle(indices)
-        
-        # Function to check shadow condition
-        def is_in_shadow(idx, t, M, shadow_time):
-            current_time = t[idx]
-            current_mag = M[idx]
-            shadow_indices = np.where((t < current_time) & (t >= current_time - shadow_time))[0]
-            return any(M[shadow_indices] > current_mag)
-
-        # Iterate over shuffled pairs of indices to find the valid pair
-        for i1 in shuffled_indices:
-            for i2 in shuffled_indices:
-                if (
-                    (np.abs(M[i1]-M_ref) < max_magnitude_delta) and 
-                    (np.abs(M[i2]-M_ref) < max_magnitude_delta) and 
-                    (abs(t[i2] - t[i1])  > min_time_delta) and
-                    (not is_in_shadow(i1, t, M, shadow_time)) and
-                    (not is_in_shadow(i2, t, M, shadow_time))
-                ):
-                        return i1, i2
-                    
-        return None, None  # only arrives here if no adequate indices were found
         
     def create_surrogate_catalog( 
         self,
@@ -63,6 +48,7 @@ class RepeaterCatalog(EarthquakeCatalog):
         max_distance_km = 800, # selected to preserve some of the same structure with Mc and similar tectonic setting        
         max_magnitude_delta = 0.1, # (event_pairs.catalog.Mag - event_pairs.catalog.Mag_2).abs().mean()  
         min_time_delta_days = 365, # avoid the events being related to eachother
+        max_time_delta_days = 10*365, # to be more similar to the typical repeaters
         min_prior_time_delta = 60, # avoid mainshocks occuring before the event
         min_nearby_events = 4,
     ) -> Self:
@@ -73,25 +59,56 @@ class RepeaterCatalog(EarthquakeCatalog):
         
         assert min_nearby_events >= 2
         
+        def _get_pair(t, M, M_ref, max_magnitude_delta, min_time_delta, max_time_delta, shadow_time):
+            
+            indices = np.arange(len(t))
+            indices = indices[np.abs(M[indices] - M_ref)<max_magnitude_delta]
+            
+            np.random.shuffle(indices)
+            
+            # Function to check shadow condition
+            def is_in_shadow(idx, t, M, shadow_time):
+                current_time = t[idx]
+                current_mag = M[idx]
+                shadow_indices = np.where((t < current_time) & (t >= current_time - shadow_time))[0]
+                return any(M[shadow_indices] > current_mag)
+
+            # Iterate over shuffled pairs of indices to find the valid pair
+            for i1 in indices:
+                for i2 in indices:
+                    if (
+                        (abs(t[i2] - t[i1])  > min_time_delta) and
+                        (abs(t[i2] - t[i1])  < max_time_delta) and
+                        (not is_in_shadow(i1, t, M, shadow_time)) and
+                        (not is_in_shadow(i2, t, M, shadow_time))
+                    ):
+                        return i1, i2
+                    
+            return None, None  # only arrives here if no adequate indices were found
+        
         # NOTE: if min_nearby_events is too small you run the risk of collision 
         # with the original dataset
         
         for nearby_indices_by_event, (_, row) in zip(nearby_indices, self.catalog.iterrows()):
                         
-            candidate_events = self.catalog.iloc(nearby_indices_by_event)
+            candidate_events = other_catalog.catalog.iloc[nearby_indices_by_event]
                      
-            I1, I2 = self.get_pair(
+            I1, I2 = _get_pair( 
                 candidate_events.time.values,
                 candidate_events.mag.values, 
-                M_ref= row.mag,
+                M_ref = row.mag,
                 max_magnitude_delta = max_magnitude_delta,
-                min_time_delta=min_time_delta_days, 
-                shadow_time=min_prior_time_delta,
+                min_time_delta=min_time_delta_days*np.timedelta64(1,'D'), 
+                max_time_delta=max_time_delta_days*np.timedelta64(1,'D'), 
+                shadow_time=min_prior_time_delta*np.timedelta64(1,'D'),
             )
             
             if I1 and I2:
+                if candidate_events.time.values[I1] > candidate_events.time.values[I2]:
+                    I1, I2 = I2, I1
                 event_info.append(candidate_events.iloc[I1])
                 second_event_info.append(candidate_events.iloc[I2])
+                
             
         dummy_event_pairs = copy.deepcopy(self)
 
@@ -119,6 +136,7 @@ class RepeaterCatalog(EarthquakeCatalog):
         dummy_event_pairs.catalog = dummy_catalog
         dummy_event_pairs.catalog["Datetime"] = dummy_event_pairs.catalog["time"]
         dummy_event_pairs._catalog = copy.deepcopy(dummy_event_pairs.catalog)
+        dummy_event_pairs.min_time_delta_years = min_time_delta_days/365
         
         return dummy_event_pairs
         
@@ -151,6 +169,10 @@ class RepeaterCatalog(EarthquakeCatalog):
         rows = [[r,r] for r in range(len(self.catalog))]
         
         [ax.plot(t, r, marker='.', markersize=5, c='C0',lw=1, alpha=0.5) for t,r in zip(event1_event2, rows)]
+        if self.min_time_delta_years is not None:
+            event1_event2 = [[row.Datetime, row.Datetime + self.min_time_delta_years*np.timedelta64(1,'Y')] for _, row in self.catalog.iterrows()]
+            [ax.plot(t, r, markersize=5, c='r',lw=1, alpha=0.5) for t,r in zip(event1_event2, rows)]
+        
         ax.set(yticklabels=[], xlabel='Date')
     
 class RepeaterSequences:
