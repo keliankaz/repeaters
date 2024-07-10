@@ -29,6 +29,34 @@ class RepeaterCatalog(EarthquakeCatalog):
         self._catalog = _catalog
         self._toggle = 0
         
+        
+    @staticmethod
+    def get_pair(t, M, M_ref, max_magnitude_delta, min_time_delta, shadow_time):
+        
+        indices = list(range(len(t)))
+        shuffled_indices = np.random.shuffle(indices)
+        
+        # Function to check shadow condition
+        def is_in_shadow(idx, t, M, shadow_time):
+            current_time = t[idx]
+            current_mag = M[idx]
+            shadow_indices = np.where((t < current_time) & (t >= current_time - shadow_time))[0]
+            return any(M[shadow_indices] > current_mag)
+
+        # Iterate over shuffled pairs of indices to find the valid pair
+        for i1 in shuffled_indices:
+            for i2 in shuffled_indices:
+                if (
+                    (np.abs(M[i1]-M_ref) < max_magnitude_delta) and 
+                    (np.abs(M[i2]-M_ref) < max_magnitude_delta) and 
+                    (abs(t[i2] - t[i1])  > min_time_delta) and
+                    (not is_in_shadow(i1, t, M, shadow_time)) and
+                    (not is_in_shadow(i2, t, M, shadow_time))
+                ):
+                        return i1, i2
+                    
+        return None, None  # only arrives here if no adequate indices were found
+        
     def create_surrogate_catalog( 
         self,
         other_catalog: Catalog,
@@ -36,54 +64,34 @@ class RepeaterCatalog(EarthquakeCatalog):
         max_magnitude_delta = 0.1, # (event_pairs.catalog.Mag - event_pairs.catalog.Mag_2).abs().mean()  
         min_time_delta_days = 365, # avoid the events being related to eachother
         min_prior_time_delta = 60, # avoid mainshocks occuring before the event
+        min_nearby_events = 4,
     ) -> Self:
+        
         nearby_indices = self.get_neighboring_indices(other_catalog, buffer_radius_km=max_distance_km)
         event_info = []
         second_event_info = []
         
-        for nearby_indices_by_event, (i, row) in zip(nearby_indices, self.catalog.iterrows()):
-    
-            # get a random event that satisfies the specified search criteria (if any)
-            candidate_events = other_catalog.catalog.iloc[nearby_indices_by_event]
+        assert min_nearby_events >= 2
+        
+        # NOTE: if min_nearby_events is too small you run the risk of collision 
+        # with the original dataset
+        
+        for nearby_indices_by_event, (_, row) in zip(nearby_indices, self.catalog.iterrows()):
+                        
+            candidate_events = self.catalog.iloc(nearby_indices_by_event)
+                     
+            I1, I2 = self.get_pair(
+                candidate_events.time.values,
+                candidate_events.mag.values, 
+                M_ref= row.mag,
+                max_magnitude_delta = max_magnitude_delta,
+                min_time_delta=min_time_delta_days, 
+                shadow_time=min_prior_time_delta,
+            )
             
-            indices_satisfying_criteria = np.nonzero(
-                np.abs(candidate_events.mag.values - row.mag) < max_magnitude_delta
-            )[0]
-            
-            if not np.any(indices_satisfying_criteria):
-                continue
-            
-            # greedy option to do this after the random event selection and 
-            # try a new event if criteria is not fullfilled instead of checking each value
-            # new_indices_satisfying_criteria = []
-            # for i in indices_satisfying_criteria:
-            #     dt = (candidate_events.time.values[i] - candidate_events.time)/np.timedelta64(1,'D')
-            #     if not np.any(candidate_events.loc[dt<min_prior_time_delta].mag > row.mag-max_magnitude_delta):
-            #         new_indices_satisfying_criteria.append(i)
-            # indices_satisfying_criteria = new_indices_satisfying_criteria
-            
-            if not np.any(indices_satisfying_criteria):
-                continue
-            
-            selected_event_index = np.random.choice(indices_satisfying_criteria)
-            
-            # get a second event time that satisfies the criteria
-            candidate_times = candidate_events["time"].values
-            cadiate_datetime_2 = candidate_times[indices_satisfying_criteria]
-            
-            indices_satisfying_min_timedelta = np.nonzero(
-                np.abs((cadiate_datetime_2 - candidate_times[selected_event_index])/np.timedelta64(1,'D'))
-                > min_time_delta_days
-            )[0]
-            
-            if not np.any(indices_satisfying_min_timedelta):
-                continue
-            
-            selected_second_event = np.random.choice(indices_satisfying_min_timedelta)
-
-            
-            event_info.append(candidate_events.iloc[selected_event_index])
-            second_event_info.append(candidate_events.iloc[indices_satisfying_criteria[selected_second_event]])
+            if I1 and I2:
+                event_info.append(candidate_events.iloc[I1])
+                second_event_info.append(candidate_events.iloc[I2])
             
         dummy_event_pairs = copy.deepcopy(self)
 
