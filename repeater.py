@@ -45,7 +45,8 @@ class RepeaterCatalog(EarthquakeCatalog):
     def create_surrogate_catalog( 
         self,
         other_catalog: Catalog,
-        max_distance_km = 800, # selected to preserve some of the same structure with Mc and similar tectonic setting        
+        min_distance_km = 10, # avoid just selecting the same events or exact same geology
+        max_distance_km = 300, # selected to preserve some of the same structure with Mc and similar tectonic setting        
         max_magnitude_delta = 0.1, # (event_pairs.catalog.Mag - event_pairs.catalog.Mag_2).abs().mean()  
         min_time_delta_days = 365, # avoid the events being related to eachother
         max_time_delta_days = 10*365, # to be more similar to the typical repeaters
@@ -54,6 +55,10 @@ class RepeaterCatalog(EarthquakeCatalog):
     ) -> Self:
         
         nearby_indices = self.get_neighboring_indices(other_catalog, buffer_radius_km=max_distance_km)
+        exclude = self.get_neighboring_indices(other_catalog, buffer_radius_km=min_distance_km)
+        
+        nearby_indices = [list(set(good) - set(bad)) for good, bad in zip(nearby_indices, exclude)]
+        
         event_info = []
         second_event_info = []
         
@@ -61,27 +66,24 @@ class RepeaterCatalog(EarthquakeCatalog):
         
         def _get_pair(t, M, M_ref, max_magnitude_delta, min_time_delta, max_time_delta, shadow_time):
             
-            indices = np.arange(len(t))
-            indices = indices[np.abs(M[indices] - M_ref)<max_magnitude_delta]
-            
-            np.random.shuffle(indices)
-            
             # Function to check shadow condition
             def is_in_shadow(idx, t, M, shadow_time):
                 current_time = t[idx]
                 current_mag = M[idx]
                 shadow_indices = np.where((t < current_time) & (t >= current_time - shadow_time))[0]
                 return any(M[shadow_indices] > current_mag)
-
-            # Iterate over shuffled pairs of indices to find the valid pair
+            
+            indices = np.arange(len(t))
+            indices = indices[np.abs(M[indices] - M_ref)<max_magnitude_delta]
+            indices = indices[np.max(t[indices]) - t[indices] > min_time_delta]          # cannot be at the very end of the catalgo
+            indices = indices[[not is_in_shadow(i, t, M, shadow_time) for i in indices]] # cannot follow larger event
+            
+            np.random.shuffle(indices)
+            
+            # trial and error with shuffled pairs of indices to find the valid pair
             for i1 in indices:
                 for i2 in indices:
-                    if (
-                        (abs(t[i2] - t[i1])  > min_time_delta) and
-                        (abs(t[i2] - t[i1])  < max_time_delta) and
-                        (not is_in_shadow(i1, t, M, shadow_time)) and
-                        (not is_in_shadow(i2, t, M, shadow_time))
-                    ):
+                    if (abs(t[i2] - t[i1])  > min_time_delta) and (abs(t[i2] - t[i1])  < max_time_delta):
                         return i1, i2
                     
             return None, None  # only arrives here if no adequate indices were found
