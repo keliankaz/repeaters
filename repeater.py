@@ -6,7 +6,7 @@ import pandas as pd
 from typing import Optional
 from typing_extensions import Self
 from matplotlib import pyplot as plt
-
+import warnings
 
 class RepeaterCatalog(EarthquakeCatalog):
     def __init__(
@@ -87,22 +87,13 @@ class RepeaterCatalog(EarthquakeCatalog):
             shadow_time,
         ):
 
-            # Function to check shadow condition
-            def is_in_shadow(idx, t, M, shadow_time):
-                current_time = t[idx]
-                current_mag = M[idx]
-                shadow_indices = np.where(
-                    (t < current_time) & (t >= current_time - shadow_time)
-                )[0]
-                return any(M[shadow_indices] > current_mag)
-
             indices = np.arange(len(t))
             indices = indices[np.abs(M[indices] - M_ref) < max_magnitude_delta]
             indices = indices[
                 np.max(t[indices]) - t[indices] > min_time_delta
-            ]  # cannot be at the very end of the catalgo
+            ]  # cannot be at the very end of the catalog
             indices = indices[
-                [not is_in_shadow(i, t, M, shadow_time) for i in indices]
+                [not RepeaterCatalog.is_in_shadow(i, t, M, shadow_time) for i in indices]
             ]  # cannot follow larger event
 
             np.random.shuffle(indices)
@@ -172,6 +163,16 @@ class RepeaterCatalog(EarthquakeCatalog):
         dummy_event_pairs.min_time_delta_years = min_time_delta_days / 365
 
         return dummy_event_pairs
+
+    # Function to check shadow condition
+    @staticmethod
+    def is_in_shadow(idx, t, M, shadow_time):
+        current_time = t[idx]
+        current_mag = M[idx]
+        shadow_indices = np.where(
+            (t < current_time) & (t >= current_time - shadow_time)
+        )[0]
+        return any(M[shadow_indices] > current_mag)
 
     def toggle_catalog(self, i=None, in_place=True):
         if i is not None:
@@ -296,11 +297,14 @@ class RepeaterSequences:
     def get_combined_sequence_data(self):
 
         sequences_1 = self.get_sequences(
-            self.query_catalog.toggle_catalog(0, in_place=False), self.base_catalog
+            self.query_catalog.toggle_catalog(0, in_place=True), self.base_catalog
         )
+        
         sequences_2 = self.get_sequences(
-            self.query_catalog.toggle_catalog(1, in_place=False), self.base_catalog
+            self.query_catalog.toggle_catalog(1, in_place=True), self.base_catalog
         )
+        
+        self.query_catalog.toggle_catalog(0, in_place=True)
 
         combined_sequences = []
         for (_, row), c1, c2 in zip(self.query_catalog, sequences_1, sequences_2):
@@ -344,9 +348,16 @@ class RepeaterSequences:
                 row.time + self.sequence_start_dt_days + self.sequence_duration_days,
             )
 
-            if len(Mc_catalog) >= self.minimum_number_of_events:
+            if (
+                len(Mc_catalog) >= self.minimum_number_of_events and
+                len(Mc_catalog) > 2 # minimum to make an Mc
+            ):
                 Mc = self.mc_max_curvature(Mc_catalog.catalog.mag.values)
             else:
+                warnings.warn(
+                    "Not enough events to determine the catalog completeness, setting Mc to 0"
+                )
+                
                 Mc = 0  # Bad solution but whatever
 
             local_catalog = EarthquakeCatalog(base_catalog.catalog.iloc[Isequence])
@@ -358,6 +369,7 @@ class RepeaterSequences:
                 row.time + self.sequence_start_dt_days,
                 row.time + self.sequence_start_dt_days + self.sequence_duration_days,
             )
+            
             sequences.append(catalog)
 
         return sequences
