@@ -223,7 +223,10 @@ class Catalog:
         return new
 
     def get_time_slice(self, start_time, end_time):
-        return self.slice_by("time", start_time, end_time)
+        new = self.slice_by("time", start_time, end_time)
+        new.start_time = start_time
+        new.end_time = end_time
+        return new
 
     def get_space_slice(self, latitude_range, longitude_range):
         return self.slice_by("lat", *latitude_range).slice_by("lon", *longitude_range)
