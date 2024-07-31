@@ -1,7 +1,7 @@
 import numpy as np
 import copy
 import pandas as pd
-from typing import Optional, Literal
+from typing import Optional
 from typing_extensions import Self
 from matplotlib import pyplot as plt
 import warnings
