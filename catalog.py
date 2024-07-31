@@ -1,5 +1,3 @@
-# %%
-
 from __future__ import annotations
 import pandas as pd
 from sklearn.neighbors import BallTree
@@ -222,6 +220,21 @@ class Catalog:
 
         return new
 
+    def get_categorical_slice(self, col_name: str, query: Union[str, list, np.ndarray]):
+        new = copy.deepcopy(self)
+        
+        if isinstance(query, int) or isinstance(query, str):
+            in_category = self.catalog[col_name] == query
+        elif isinstance(query, list) or isinstance(query, np.ndarray):
+            in_category = np.any(np.array([self.catalog[col_name] == q for q in query]), axis=0)
+        else:
+            raise ValueError
+        
+        new.catalog = self.catalog.loc[in_category]
+        new.__update__()
+        
+        return new
+
     def get_time_slice(self, start_time, end_time):
         new = self.slice_by("time", start_time, end_time)
         new.start_time = start_time
@@ -252,7 +265,7 @@ class Catalog:
         buffer_radius_km: float = 100,
         buffer_time_days: float = 30,
         stategy: Literal[
-            "keep first", "keep last", "keep largest", "referece"
+            "keep first", "keep last", "keep largest", "reference"
         ] = "keep first",
         ref_preference=None,
     ) -> Catalog:
@@ -444,11 +457,14 @@ class Catalog:
             plt.setp(markers, markersize=0.5, alpha=0.5)
 
         elif type == "hist":
-            ax.hist(self.catalog["time"], bins=500)
+            ax.hist(self.catalog["time"], bins=50)
             ax.set_yscale("log")
-
-        ax.set_xlabel("Time")
-        ax.set_ylabel(column)
+            
+        ax.set(
+            xlim = (self.start_time, self.end_time),
+            xlabel = "Time", 
+            ylabel = column, 
+        )
         axb = ax.twinx()
         sns.ecdfplot(self.catalog["time"], c="C1", stat="count", ax=axb)
 
@@ -685,7 +701,7 @@ class Catalog:
         usemap_proj = crs.PlateCarree(),
         ax=None,
     ) -> plt.axes.Axes:
-        ax = self.plot_base_map(extent=extent, usemap_proj = usemap_proj, ax=ax)
+        ax = self.plot_base_map(extent=extent, usemap_proj=usemap_proj, ax=ax)
 
         if scatter_kwarg is None:
             scatter_kwarg = {}
