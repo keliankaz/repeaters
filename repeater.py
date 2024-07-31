@@ -1,19 +1,171 @@
 import numpy as np
 import copy
-from catalog import Catalog
-from earthquake import EarthquakeCatalog
 import pandas as pd
-from typing import Optional
+from typing import Optional, Literal
 from typing_extensions import Self
 from matplotlib import pyplot as plt
 import warnings
+import re
+from pathlib import Path
+
+import itertools
+import networkx as nx
+
+from catalog import Catalog
+from earthquake import EarthquakeCatalog
+
+default_catalogs_dir = Path(__file__).parents[0] / "data"
+
 
 class RepeaterCatalog(EarthquakeCatalog):
+    def __init__(self):
+
+        _catalog = self.load_catalog()
+        super().__init__(catalog=_catalog)
+        assert "family" in self.catalog.columns
+
+    ## all repeater catalogs need the following
+    def get_families(self) -> list[Catalog]:
+        out = []
+        for i in self.catalog.family.unique():
+            family = self.get_categorical_slice("family", int(i))
+            out.append(family)
+        return out
+
+    def load_catalog(self):
+        return NotImplementedError
+
+    def get_nodes(self):
+        return NotImplementedError
+
+    def get_edges(self):
+        return NotImplementedError
+
+    ## Useful operations for repeater catalogs
+    def get_family(self, family_index):
+        new = copy.deepcopy(self)
+        new.catalog = self.catalog.loc[self.catalog == family_index]
+        return new
+
+    def create_graph(self):
+        G = nx.Graph()
+        G.add_nodes_from(self.get_nodes())
+        G.add_edges_from(self.get_edges())
+        return G
+
+    def create_connected_graph(self):
+        G = self.create_graph()
+        components = list(nx.connected_components(G))
+        for component in components:
+            for u, v in itertools.combinations(component, 2):
+                if not G.has_edge(u, v):
+                    G.add_edge(u, v)
+
+    ##  Useful plotting operations for repeater catalogs
+    def plot_sequence(self, family_index, ax=None):
+        repeater_sequence = self.get_family(family_index)
+        ax = repeater_sequence.plot_time_series(ax=ax)
+        return ax
+
+
+class WaldhauserRepeaterCatalog(RepeaterCatalog):
+    filename = default_catalogs_dir / "waldhauser_shaff_repeaters.txt"
+
+    def __init__(
+        self,
+    ):
+        super().__init__()
+
+    def load_catalog(self):
+
+        data = []
+        header = None
+        with open(self.filename, "r") as file:
+            for line in file:
+                if line.startswith("#"):
+                    # Parse header line
+                    header_match = re.match(
+                        r"#\s*(\d+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+([-.\dNaN]+)\s+(\S+)",
+                        line,
+                    )
+
+                    if header_match:
+                        header = header_match.groups()
+                else:
+                    # Parse event line
+                    event_match = re.match(
+                        r"(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+([-.\d]+)\s+(\d+)\s+([-.\d]+)\s+([-.\d]+)\s+([-.\d]+)\s+([-.\d]+)\s+([-.\d]+)\s+([-.\d]+)\s+([-.\d]+)\s+([-.\d]+)\s+([-.\d]+)\s+([-.\d]+)\s+(\d+)",
+                        line,
+                    )
+                    if event_match:
+                        event = event_match.groups()
+                        if header:
+                            combined = header + event
+                            data.append(combined)
+                        else:
+                            print(
+                                f"No header found for event line: {line.strip()}"
+                            )  # Debug print to catch cases with missing headers
+
+        columns = [
+            "NEV",
+            "LATm",
+            "LONm",
+            "DEPm",
+            "DMAGm",
+            "DMAGs",
+            "RCm",
+            "RCs",
+            "RCcv",
+            "RCm1",
+            "RCs1",
+            "RCcv1",
+            "CCm",
+            "seqID",
+            "year",
+            "month",
+            "day",
+            "hour",
+            "minute",
+            "second",
+            "DAYS",
+            "lat",
+            "lon",
+            "depth",
+            "EX",
+            "EY",
+            "EZ",
+            "mag",
+            "DMAG",
+            "DMAGE",
+            "CCm_event",
+            "evID",
+        ]
+
+        df = pd.DataFrame(data, columns=columns)
+
+        # hack
+        for col in columns:
+            if col != "seqID":
+                df[col] = df[col].apply(pd.to_numeric, errors="coerce")
+
+        df["time"] = pd.to_datetime(
+            df[["year", "month", "day", "hour", "minute", "second"]]
+        )
+
+        id_map = {seqID: i for i, seqID in enumerate(df.seqID.unique())}
+        df["family"] = [id_map[seqID] for seqID in df.seqID]
+
+        return df
+
+
+class SongRepeaterCatalog(EarthquakeCatalog):
     def __init__(
         self,
         file_name,
         min_time_delta_years=None,
     ):
+
         _catalog = pd.read_csv(
             filepath_or_buffer=file_name,
             delim_whitespace=True,
@@ -48,6 +200,17 @@ class RepeaterCatalog(EarthquakeCatalog):
 
         self._catalog = _catalog
         self._toggle = 0
+
+    def get_split_ID(self):
+        self.catalog["Doublet_ID"]
+        return [list(s.plit("_")) for s in self.catalog["Doublet_ID"]]
+
+    def get_nodes(self):
+        ids = sum(self.split_ID(), [])  # flattens the ids
+        return set(ids)
+
+    def get_edges(self):
+        return self.get_split_ID()
 
     def create_surrogate_catalog(
         self,
@@ -93,7 +256,10 @@ class RepeaterCatalog(EarthquakeCatalog):
                 np.max(t[indices]) - t[indices] > min_time_delta
             ]  # cannot be at the very end of the catalog
             indices = indices[
-                [not RepeaterCatalog.is_in_shadow(i, t, M, shadow_time) for i in indices]
+                [
+                    not RepeaterCatalog.is_in_shadow(i, t, M, shadow_time)
+                    for i in indices
+                ]
             ]  # cannot follow larger event
 
             np.random.shuffle(indices)
@@ -299,11 +465,11 @@ class RepeaterSequences:
         sequences_1 = self.get_sequences(
             self.query_catalog.toggle_catalog(0, in_place=True), self.base_catalog
         )
-        
+
         sequences_2 = self.get_sequences(
             self.query_catalog.toggle_catalog(1, in_place=True), self.base_catalog
         )
-        
+
         self.query_catalog.toggle_catalog(0, in_place=True)
 
         combined_sequences = []
@@ -349,15 +515,15 @@ class RepeaterSequences:
             )
 
             if (
-                len(Mc_catalog) >= self.minimum_number_of_events and
-                len(Mc_catalog) > 2 # minimum to make an Mc
+                len(Mc_catalog) >= self.minimum_number_of_events
+                and len(Mc_catalog) > 2  # minimum to make an Mc
             ):
                 Mc = self.mc_max_curvature(Mc_catalog.catalog.mag.values)
             else:
                 warnings.warn(
                     "Not enough events to determine the catalog completeness, setting Mc to 0"
                 )
-                
+
                 Mc = 0  # Bad solution but whatever
 
             local_catalog = EarthquakeCatalog(base_catalog.catalog.iloc[Isequence])
@@ -369,7 +535,7 @@ class RepeaterSequences:
                 row.time + self.sequence_start_dt_days,
                 row.time + self.sequence_start_dt_days + self.sequence_duration_days,
             )
-            
+
             sequences.append(catalog)
 
         return sequences
