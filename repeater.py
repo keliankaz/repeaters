@@ -1,3 +1,4 @@
+#%% 
 import numpy as np
 import copy
 import pandas as pd
@@ -155,6 +156,37 @@ class WaldhauserRepeaterCatalog(RepeaterCatalog):
 
         id_map = {seqID: i for i, seqID in enumerate(df.seqID.unique())}
         df["family"] = [id_map[seqID] for seqID in df.seqID]
+
+        return df
+
+
+class IgarashiRepeaterCatalog(RepeaterCatalog):
+    filename = default_catalogs_dir / "igarashi_2020.txt"
+
+    def __init__(
+        self,
+    ):
+        super().__init__()
+
+    def load_catalog(self):
+
+        df = pd.read_csv(
+            self.filename,
+            sep="\s+",
+            header=1,
+            names=[
+                "family",
+                "date",
+                "lat",
+                "lon",
+                "depth",
+                "mag",
+            ]
+        )
+
+        df['date_string'] = df['date'].astype(str)
+        df['seconds'] = (df['date_string'].str[12:]).astype(float) * 100
+        df['time'] = pd.to_datetime(df['date_string'].str[:12], format='%Y%m%d%H%M', errors='coerce') + df['seconds']*np.timedelta64(1,'s')
 
         return df
 
@@ -539,3 +571,12 @@ class RepeaterSequences:
             sequences.append(catalog)
 
         return sequences
+# %%
+
+if __name__ == '__main__':
+    
+    repeaters = IgarashiRepeaterCatalog()
+    repeaters.catalog['number_of_events'] = repeaters.catalog.groupby("family")['date'].transform(len)
+    repeaters = repeaters.slice_by('number_of_events',10)
+    [repeaters.get_categorical_slice('family', int(i)).plot_time_series() for i in repeaters.catalog['family'].unique()[:10]]
+    
