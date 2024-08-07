@@ -62,6 +62,16 @@ class CoupledOscillator:
             )
 
         self.phase += rate * dt
+        
+    @staticmethod
+    def runge_kutta_step(xn,f,dt):
+        
+        k1 = f(xn) * dt
+        k2 = f(xn + 0.5 * k1) * dt
+        k3 = f(xn + 0.5 * k2) * dt
+        k4 = f(xn + k3) * dt
+        
+        return (k1+2*k2+2*k3+k4)/6
 
     def log(self):
         self.record.append(self.get_state())
@@ -160,7 +170,7 @@ class PulsedCoupledOscillator(CoupledOscillator):
         pulse_discharge: Union[float, np.ndarray],
         charge_rate: Union[float, np.ndarray],
         leakage_rate: Union[float, np.ndarray],
-        pulse_threshold:  Union[float, np.ndarray],
+        pulse_threshold: Union[float, np.ndarray],
         **coupledOscillator_kwargs,
     ):
 
@@ -175,11 +185,6 @@ class PulsedCoupledOscillator(CoupledOscillator):
             charge_rate * np.ones(self.number_of_oscillators)
             if isinstance(charge_rate, float)
             else charge_rate
-        )
-        self.leakage_rate = (
-            leakage_rate * np.ones(self.number_of_oscillators)
-            if isinstance(leakage_rate, float)
-            else leakage_rate
         )
         self.leakage_rate = (
             leakage_rate * np.ones(self.number_of_oscillators)
