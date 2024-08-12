@@ -319,21 +319,26 @@ class Catalog:
 
     def intersection(
         self,
-        other: Catalog,
+        other: Union[Catalog, np.ndarray],
         buffer_radius_km: float = 50.0,
         buffer_time_days=None,
         return_indices=False,
     ) -> Catalog:
-        """returns a new catalog with the events within `buffer_radius_km`  and `buffer_time_days` of each other"""
+        """returns a new catalog with the events in self within `buffer_radius_km` and `buffer_time_days` of each other"""
 
         # For each event we get the indices of events in other that are within `buffer_radius_km` of it
         tree = BallTree(
             np.deg2rad(self.catalog[["lat", "lon"]].values),
             metric="haversine",
         )
+        
+        if isinstance(other, np.ndarray):
+            other_points = other
+        else:
+            other_points = other.catalog[["lat", "lon"]].values
 
         indices = tree.query_radius(
-            np.deg2rad(other.catalog[["lat", "lon"]].values),
+            np.deg2rad(other_points),
             r=buffer_radius_km / EARTH_RADIUS_KM,
             return_distance=False,
         )
