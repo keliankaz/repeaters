@@ -2,7 +2,8 @@
 import numpy as np
 import copy
 import pandas as pd
-from typing import Optional
+from typing import Optional, Literal
+from datetime import datetime, timedelta
 from typing_extensions import Self
 from matplotlib import pyplot as plt
 import warnings
@@ -186,10 +187,100 @@ class IgarashiRepeaterCatalog(RepeaterCatalog):
 
         df['date_string'] = df['date'].astype(str)
         df['seconds'] = (df['date_string'].str[12:]).astype(float) * 100
-        df['time'] = pd.to_datetime(df['date_string'].str[:12], format='%Y%m%d%H%M', errors='coerce') + df['seconds']*np.timedelta64(1,'s')
+        
+        _date_string = df['date_string'].str[:12]
+        
+        # annoying 60 min
+        annoying_bool = _date_string.str[-2:]=='60'
+        
+        _date_string[annoying_bool] = (
+            _date_string[annoying_bool].str[:8] 
+            + ( 
+               _date_string[annoying_bool].str[8:10].astype(int)+1 
+            ).astype(str) 
+            + '00'
+        )
+        
+        df['time'] = pd.to_datetime(_date_string,format='%Y%m%d%H%M') + df['seconds']*np.timedelta64(1,'s')
+        
+        # probably should make a method in repeaters for these:
+        df['NEV'] = df.groupby("family")['time'].transform(len) 
+        df = df.loc[df['NEV']>1]
+        
+        df['dt'] = df.groupby("family")['time'].transform('diff')/np.timedelta64(1,'D')
+        df['COV'] = df.groupby("family")['dt'].transform(lambda dt: np.std(dt)/np.mean(dt))
+        
 
         return df
 
+class TakaAkiRepeaterCatalog(RepeaterCatalog):
+    
+    """Notes about the catalog:
+    
+    - Anecdotally the catalog does not contain the exact set of events as e.g. the Waldhauser catalog or the Nadeau catalogs. 
+    - Event locations are not explicitely relocated
+    - The location of the last event is assigned to the whole family
+    
+    """
+    
+    def __init__(
+        self,
+        filename: Literal[
+            "SJBPK.freq8-24Hz_maxdist3_coh9500_linkage_cluster.txt",
+            "SJBPK.freq8-24Hz_maxdist3_coh9560_linkage_cluster.txt",
+            "SJBPK.freq8-24Hz_maxdist3_coh9565_linkage_cluster.txt",
+            "SJBPK.freq8-24Hz_maxdist3_coh9700_linkage_cluster.txt",
+            "SJBPK.freq8-24Hz_maxdist3_coh9800_linkage_cluster.txt",
+        ] = "SJBPK.freq8-24Hz_maxdist3_coh9500_linkage_cluster.txt",
+        dirname: str = "CRE_TAKAAKI_2022",
+    ):
+        
+        self.filename = default_catalogs_dir / dirname / filename
+        super().__init__()
+    
+    @staticmethod    
+    def _deciyear_to_datetime(deciyear):
+        """
+        Converts decimal year to datetime.
+        """
+        year = int(deciyear)
+        rem = deciyear - year
+        base = datetime(year, 1, 1)
+        result = base + timedelta(
+            seconds=(base.replace(year=base.year + 1) - base).total_seconds() * rem
+        )
+        return result
+
+    def load_catalog(self):
+
+        df = pd.read_csv(
+            self.filename,
+            sep="\s+",
+            header=1,
+            names=[
+                "date",
+                "lat",
+                "lon",
+                "depth",
+                "cummulative_displacement_cm",
+                "EVID",
+                "CSID",
+                "mag",
+                "slip_cm",
+            ]
+        )
+
+        df['time'] = [self._deciyear_to_datetime(idy) for idy in df["date"].values]
+        
+        # for simplicity and uniformity I apply interger family IDs to each family
+        id_map = {CSID: i for i, CSID in enumerate(df.CSID.unique())} 
+        df["family"] = [id_map[CSID] for CSID in df.CSID]
+        
+        df['NEV'] = df.groupby("family")['time'].transform(len)
+        
+        df['NEV'] = df.groupby("family")['time'].transform(lambda t: t.)
+        
+        return df
 
 class SongRepeaterCatalog(EarthquakeCatalog):
     def __init__(
@@ -575,8 +666,9 @@ class RepeaterSequences:
 
 if __name__ == '__main__':
     
-    repeaters = IgarashiRepeaterCatalog()
+    repeaters = TakaAkiRepeaterCatalog()
     repeaters.catalog['number_of_events'] = repeaters.catalog.groupby("family")['date'].transform(len)
     repeaters = repeaters.slice_by('number_of_events',10)
     [repeaters.get_categorical_slice('family', int(i)).plot_time_series() for i in repeaters.catalog['family'].unique()[:10]]
     
+# %%
