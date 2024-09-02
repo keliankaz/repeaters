@@ -45,9 +45,7 @@ class RepeaterCatalog(EarthquakeCatalog):
 
     ## Useful operations for repeater catalogs
     def get_family(self, family_index):
-        new = copy.deepcopy(self)
-        new.catalog = self.catalog.loc[self.catalog == family_index]
-        return new
+        return self.get_categorical_slice("family", int(family_index))
 
     def create_graph(self):
         G = nx.Graph()
@@ -69,6 +67,28 @@ class RepeaterCatalog(EarthquakeCatalog):
         ax = repeater_sequence.plot_time_series(ax=ax)
         return ax
 
+    @staticmethod
+    def COV(t, unbiased=True):
+        if not isinstance(t,np.ndarray):
+            t = (t - np.min(t))/np.timedelta64(1,'D')
+        
+        t = np.sort(t)
+        
+        dt = np.diff(t)
+        
+        bias_correction = (1 + 1/(4*len(dt))) if unbiased else 1 # https://en.wikipedia.org/wiki/Coefficient_of_variation
+        
+        return bias_correction * np.std(dt) / np.mean(dt)
+    
+    @staticmethod
+    def characteristic_recurrence_interval(t, statistic: callable = np.median):
+        if not isinstance(t,np.ndarray):
+            t = (t - np.min(t))/np.timedelta64(1,'D')
+            
+        t = np.sort(t)
+        dt = np.diff(t)
+        
+        return statistic(dt)
 
 class WaldhauserRepeaterCatalog(RepeaterCatalog):
     filename = default_catalogs_dir / "waldhauser_shaff_repeaters.txt"
@@ -157,6 +177,8 @@ class WaldhauserRepeaterCatalog(RepeaterCatalog):
 
         id_map = {seqID: i for i, seqID in enumerate(df.seqID.unique())}
         df["family"] = [id_map[seqID] for seqID in df.seqID]
+        
+        df['COV'] = df['RCcv']
 
         return df
 
@@ -209,12 +231,12 @@ class IgarashiRepeaterCatalog(RepeaterCatalog):
         
         df['dt'] = df.groupby("family")['time'].transform('diff')/np.timedelta64(1,'D')
         df['COV'] = df.groupby("family")['dt'].transform(lambda dt: np.std(dt)/np.mean(dt))
-        
+        df['RCm'] = df.groupby("family")['dt'].transform(lambda dt: np.nanmedian(dt))
+         
 
         return df
 
 class TakaAkiRepeaterCatalog(RepeaterCatalog):
-    
     """Notes about the catalog:
     
     - Anecdotally the catalog does not contain the exact set of events as e.g. the Waldhauser catalog or the Nadeau catalogs. 
@@ -227,11 +249,11 @@ class TakaAkiRepeaterCatalog(RepeaterCatalog):
         self,
         filename: Literal[
             "SJBPK.freq8-24Hz_maxdist3_coh9500_linkage_cluster.txt",
-            "SJBPK.freq8-24Hz_maxdist3_coh9560_linkage_cluster.txt",
-            "SJBPK.freq8-24Hz_maxdist3_coh9565_linkage_cluster.txt",
+            "SJBPK.freq8-24Hz_maxdist3_coh9650_linkage_cluster.txt",
             "SJBPK.freq8-24Hz_maxdist3_coh9700_linkage_cluster.txt",
             "SJBPK.freq8-24Hz_maxdist3_coh9800_linkage_cluster.txt",
         ] = "SJBPK.freq8-24Hz_maxdist3_coh9500_linkage_cluster.txt",
+        
         dirname: str = "CRE_TAKAAKI_2022",
     ):
         
@@ -277,8 +299,13 @@ class TakaAkiRepeaterCatalog(RepeaterCatalog):
         df["family"] = [id_map[CSID] for CSID in df.CSID]
         
         df['NEV'] = df.groupby("family")['time'].transform(len)
+        df = df.loc[df['NEV']>1]
         
-        df['NEV'] = df.groupby("family")['time'].transform(lambda t: t.)
+        COV_map = {family_ID: self.COV(df.time.loc[df.family==family_ID]) for family_ID in df.family.unique()}
+        df['COV'] = [COV_map[family_ID] for family_ID in df.family]
+        
+        RCm_map = {family_ID: self.characteristic_recurrence_interval(df.time.loc[df.family==family_ID]) for family_ID in df.family.unique()}
+        df['RCm'] = [RCm_map[family_ID] for family_ID in df.family]
         
         return df
 
