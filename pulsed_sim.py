@@ -1,4 +1,4 @@
-# %%
+#%%
 import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib.animation as animation
@@ -7,6 +7,7 @@ from scipy.spatial import distance_matrix
 
 
 class Stepper:
+    """General blueprint for coupled oscillators and dynamical system."""
 
     def __init__(self):
         self.record = []
@@ -123,6 +124,9 @@ class PulsedCoupledOscillator(Stepper):
             assert self.coupling.shape == (number_of_oscillators, number_of_oscillators)
         else:
             raise ValueError("unrecognized type for `coupling`")
+        
+        
+        self._phase = None
 
         self.jittered_radius_for_plotting = None
 
@@ -130,12 +134,18 @@ class PulsedCoupledOscillator(Stepper):
 
     @property
     def phase(self):
-        return (self.charge / self.pulse_threshold) * 2 * np.pi
+        self._phase = (self.charge / self.pulse_threshold) * 2 * np.pi
+        return self._phase
+
+    @phase.setter
+    def phase(self, value):
+        self._phase = value
+        self.charge = self._phase / (2 * np.pi) * self.pulse_threshold
 
     @property
     def coupling(self):
         return (
-            self._coupling + 0 * self.phase
+            self._coupling #* self.phase
         )  # to emphasize potential phase dependence
 
     @property
@@ -146,8 +156,8 @@ class PulsedCoupledOscillator(Stepper):
             * self.coupling
             / self.pulse_threshold
             / np.abs(
-                np.row_stack(pulser.natural_frequency)
-                - np.column_stack(pulser.natural_frequency)
+                np.row_stack(self.natural_frequency)
+                - np.column_stack(self.natural_frequency)
             )
         )
 
@@ -158,15 +168,7 @@ class PulsedCoupledOscillator(Stepper):
     @property
     def natural_dt(self):
         """Rough guess at an appropriate dt - kind of a hack."""
-        return min(
-            [
-                np.min(self.natural_time)
-                / 300,  # need to resolve the orbits of the smallest events
-                np.min(self.natural_time)
-                / number_of_repeaters
-                / 10,  # need to resolve individual pulses
-            ]
-        )
+        return np.min(self.natural_time) / 300  # need to resolve the orbits of the smallest events
 
     def coherence(self, band=None):
 
@@ -178,21 +180,35 @@ class PulsedCoupledOscillator(Stepper):
         else:
             selection = np.ones_like(self.natural_frequency, dtype=bool)
 
-        return np.abs(np.sum(np.exp(pulser.phase[selection] * 1j))) / sum(selection)
+        return np.abs(np.sum(np.exp(self.phase[selection] * 1j))) / sum(selection)
 
     def step_charge(self, dt):
-        change = (
-            self.charge_rate - self.leakage_rate * self.charge / self.pulse_threshold
-        )
-        self.charge += change * dt
+        
+        def f(x):
+            return self.charge_rate - self.leakage_rate * x / self.pulse_threshold
+        
+        self.charge += self.runge_kutta_step(self.charge, f, dt)
 
     def discharge(self):
+        
         pulse = self.charge > self.pulse_threshold
-        if np.any(pulse):
-            self.charge[pulse] = 0
-            self.charge += (
-                self.coupling @ np.vstack(pulse)
-            ).squeeze() * self.pulse_discharge
+        
+        count_cascade = 0
+        
+        # while np.any(pulse):
+            
+        self.charge[pulse] = 0
+        self.charge += (
+            self.coupling @ np.vstack(pulse)
+        ).squeeze() * self.pulse_discharge
+        
+        pulse = self.charge > self.pulse_threshold
+        
+        count_cascade += 1
+            
+            # if count_cascade > 100:
+            #     print('Exiting casade of events, consider making time step shorter')
+            #     break 
 
     def step(self, dt):
         self.step_charge(dt)
@@ -281,7 +297,7 @@ class SpatialPulsedOscillator(PulsedCoupledOscillator):
         self.locations = locations
 
         if coupling is None:
-            distance = distance_matrix(self.locations, locations)
+            distance = distance_matrix(self.locations, self.locations)
             coupling = distance**-1
             np.fill_diagonal(
                 coupling, 0
@@ -347,6 +363,8 @@ class Repeaters(SpatialPulsedOscillator):
         if sizes is None:
             sizes = np.ones(number_of_repeaters)
         self.sizes = sizes
+        
+        self.fault_dimensions = fault_dimensions
 
         if pulse_discharge is None:
             pulse_discharge = self.sizes * strain_drop
@@ -356,6 +374,22 @@ class Repeaters(SpatialPulsedOscillator):
             pulse_threshold = (
                 pulse_discharge  # the threshold is correlated with the slip
             )
+            
+        if locations is None:
+            locations = np.column_stack(
+                [np.random.uniform(*limits, number_of_repeaters) for limits in fault_dimensions]
+            )
+        
+        distance = distance_matrix(locations, locations)
+            
+        if coupling is None:
+            coupling = ((1-self.sizes**3/distance**3)**(-1/2) - 1)
+            
+            coupling[distance < self.sizes] = -1 # deal with overlap
+            
+            np.fill_diagonal(
+                coupling, 0
+            )  # remove coupling with itself (confusing function call)
 
         super().__init__(
             number_of_oscilators=number_of_repeaters,
@@ -366,7 +400,7 @@ class Repeaters(SpatialPulsedOscillator):
             leakage_rate=leakage_rate,
             pulse_threshold=pulse_threshold,
             charge_init=initial_slip,
-            coupling=coupling,  # None - defaults to 1/r
+            coupling=coupling,
         )
 
     def plot_plane_view(
@@ -431,21 +465,20 @@ class Repeaters(SpatialPulsedOscillator):
 if __name__ == "__main__":
 
     number_of_repeaters = 100
-    density = 1/1e4 # pathes/m  <- ultimately controls the coupling
+    density = 5/1e4 # pathes/m  <- ultimately controls the coupling
     size = np.sqrt(number_of_repeaters/density)
     L, W = size, size
 
     pulser = Repeaters(
         number_of_repeaters=number_of_repeaters,
-        sizes=np.random.lognormal(1, 0.1, number_of_repeaters),
+        sizes=np.random.lognormal(1.5, 0.01, number_of_repeaters),
         fault_dimensions=[
             [0,L],
             [0,W],
         ],
-        coupling=None,
     )
 
-    number_of_heavy_orbits = 30
+    number_of_heavy_orbits = 20
     total_time = np.max(pulser.natural_time) * number_of_heavy_orbits
 
     dt = pulser.natural_dt
@@ -464,6 +497,7 @@ if __name__ == "__main__":
     t = 0
     times = []
     r = []
+    event_count = []
 
     frequency_bins = np.linspace(
         np.min(pulser.natural_frequency), np.max(pulser.natural_frequency), 5
@@ -485,6 +519,7 @@ if __name__ == "__main__":
                 for f1, f2 in zip(frequency_bins[:-1], frequency_bins[1:])
             ]
         )
+        event_count.append(np.sum(pulser.phase==0))
 
     fig, AX = plt.subplots(
         1, 2, figsize=(6.5, 3), gridspec_kw=dict(width_ratios=(2, 1))
@@ -509,7 +544,11 @@ if __name__ == "__main__":
     )
 
     pulser.plot_state(ax=AX[1])
+    
+    fig, ax = plt.subplots(figsize=(10,2))
+    ax.plot(times, event_count, lw=0.5)
 
     plt.rcParams["figure.dpi"] = 150
     pulser.make_gif("ride_my_repeater_cycle.gif")
+
 # %%
