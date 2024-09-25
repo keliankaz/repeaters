@@ -494,7 +494,7 @@ class Catalog:
 
         default_kwargs = {
             "alpha": 0.5,
-            "color": "C0",
+            "c": "C0",
         }
 
         if kwargs is None:
@@ -691,6 +691,7 @@ class Catalog:
 
         ax.add_feature(cartopy.feature.COASTLINE,lw=0.5, color="silver")
         ax.add_feature(cartopy.feature.LAND, color="whitesmoke")
+        ax.add_feature(cartopy.feature.STATES, lw=0.5)  # Add state lines
 
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
