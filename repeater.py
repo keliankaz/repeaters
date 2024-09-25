@@ -1,8 +1,8 @@
-#%% 
+# %%
 import numpy as np
 import copy
 import pandas as pd
-from typing import Optional, Literal
+from typing import Optional, Literal, Union
 from datetime import datetime, timedelta
 from typing_extensions import Self
 from matplotlib import pyplot as plt
@@ -61,6 +61,56 @@ class RepeaterCatalog(EarthquakeCatalog):
                 if not G.has_edge(u, v):
                     G.add_edge(u, v)
 
+    @staticmethod
+    def get_single_phase(tq, t: np.ndarray):
+
+        # note: not vectorized
+
+        if tq < min(t) or tq > max(t):
+            return np.NaN
+
+        dt = (t - tq) / np.timedelta64(1, "D")
+
+        if np.min(np.abs(dt)) == 0:
+            index = np.argmin(np.abs(dt))
+            t1 = 0
+            if index == 0:
+                T = dt[index + 1]
+            elif index == len(dt) - 1:
+                T = dt[index - 1]
+            else:
+                T = np.mean(dt[[index - 1, index + 1]])
+
+        else:
+            dt_pos = dt[dt >= 0]
+            dt_neg = dt[dt < 0]
+
+            t1 = min(-dt_neg)
+            t2 = min(dt_pos)
+
+            T = t1 + t2
+
+        phase = 2 * np.pi * t1 / T
+
+        return phase
+
+    def get_phase(self, other: Union[float, Catalog, np.ndarray]):
+        if isinstance(other, float):
+            phase = self.get_single_phase(other, self.catalog.time.values)
+
+        elif isinstance(other, Catalog):
+            tq = other.catalog.time.values
+            phase = np.array(
+                [self.get_single_phase(other, self.catalog.time.values) for itq in tq]
+            )
+            
+        else:
+            phase = np.array(
+                [self.get_single_phase(other, self.catalog.time.values) for itq in tq]
+            )
+
+        return phase
+
     ##  Useful plotting operations for repeater catalogs
     def plot_sequence(self, family_index, ax=None):
         repeater_sequence = self.get_family(family_index)
@@ -69,26 +119,29 @@ class RepeaterCatalog(EarthquakeCatalog):
 
     @staticmethod
     def COV(t, unbiased=True):
-        if not isinstance(t,np.ndarray):
-            t = (t - np.min(t))/np.timedelta64(1,'D')
-        
+        if not isinstance(t, np.ndarray):
+            t = (t - np.min(t)) / np.timedelta64(1, "D")
+
         t = np.sort(t)
-        
+
         dt = np.diff(t)
-        
-        bias_correction = (1 + 1/(4*len(dt))) if unbiased else 1 # https://en.wikipedia.org/wiki/Coefficient_of_variation
-        
+
+        bias_correction = (
+            (1 + 1 / (4 * len(dt))) if unbiased else 1
+        )  # https://en.wikipedia.org/wiki/Coefficient_of_variation
+
         return bias_correction * np.std(dt) / np.mean(dt)
-    
+
     @staticmethod
     def characteristic_recurrence_interval(t, statistic: callable = np.median):
-        if not isinstance(t,np.ndarray):
-            t = (t - np.min(t))/np.timedelta64(1,'D')
-            
+        if not isinstance(t, np.ndarray):
+            t = (t - np.min(t)) / np.timedelta64(1, "D")
+
         t = np.sort(t)
         dt = np.diff(t)
-        
+
         return statistic(dt)
+
 
 class WaldhauserRepeaterCatalog(RepeaterCatalog):
     filename = default_catalogs_dir / "waldhauser_shaff_repeaters.txt"
@@ -177,8 +230,8 @@ class WaldhauserRepeaterCatalog(RepeaterCatalog):
 
         id_map = {seqID: i for i, seqID in enumerate(df.seqID.unique())}
         df["family"] = [id_map[seqID] for seqID in df.seqID]
-        
-        df['COV'] = df['RCcv']
+
+        df["COV"] = df["RCcv"]
 
         return df
 
@@ -204,47 +257,51 @@ class IgarashiRepeaterCatalog(RepeaterCatalog):
                 "lon",
                 "depth",
                 "mag",
-            ]
+            ],
         )
 
-        df['date_string'] = df['date'].astype(str)
-        df['seconds'] = (df['date_string'].str[12:]).astype(float) * 100
-        
-        _date_string = df['date_string'].str[:12]
-        
+        df["date_string"] = df["date"].astype(str)
+        df["seconds"] = (df["date_string"].str[12:]).astype(float) * 100
+
+        _date_string = df["date_string"].str[:12]
+
         # annoying 60 min
-        annoying_bool = _date_string.str[-2:]=='60'
-        
+        annoying_bool = _date_string.str[-2:] == "60"
+
         _date_string[annoying_bool] = (
-            _date_string[annoying_bool].str[:8] 
-            + ( 
-               _date_string[annoying_bool].str[8:10].astype(int)+1 
-            ).astype(str) 
-            + '00'
+            _date_string[annoying_bool].str[:8]
+            + (_date_string[annoying_bool].str[8:10].astype(int) + 1).astype(str)
+            + "00"
         )
-        
-        df['time'] = pd.to_datetime(_date_string,format='%Y%m%d%H%M') + df['seconds']*np.timedelta64(1,'s')
-        
+
+        df["time"] = pd.to_datetime(_date_string, format="%Y%m%d%H%M") + df[
+            "seconds"
+        ] * np.timedelta64(1, "s")
+
         # probably should make a method in repeaters for these:
-        df['NEV'] = df.groupby("family")['time'].transform(len) 
-        df = df.loc[df['NEV']>1]
-        
-        df['dt'] = df.groupby("family")['time'].transform('diff')/np.timedelta64(1,'D')
-        df['COV'] = df.groupby("family")['dt'].transform(lambda dt: np.std(dt)/np.mean(dt))
-        df['RCm'] = df.groupby("family")['dt'].transform(lambda dt: np.nanmedian(dt))
-         
+        df["NEV"] = df.groupby("family")["time"].transform(len)
+        df = df.loc[df["NEV"] > 1]
+
+        df["dt"] = df.groupby("family")["time"].transform("diff") / np.timedelta64(
+            1, "D"
+        )
+        df["COV"] = df.groupby("family")["dt"].transform(
+            lambda dt: np.std(dt) / np.mean(dt)
+        )
+        df["RCm"] = df.groupby("family")["dt"].transform(lambda dt: np.nanmedian(dt))
 
         return df
 
+
 class TakaAkiRepeaterCatalog(RepeaterCatalog):
     """Notes about the catalog:
-    
-    - Anecdotally the catalog does not contain the exact set of events as e.g. the Waldhauser catalog or the Nadeau catalogs. 
+
+    - Anecdotally the catalog does not contain the exact set of events as e.g. the Waldhauser catalog or the Nadeau catalogs.
     - Event locations are not explicitely relocated
     - The location of the last event is assigned to the whole family
-    
+
     """
-    
+
     def __init__(
         self,
         filename: Literal[
@@ -253,14 +310,13 @@ class TakaAkiRepeaterCatalog(RepeaterCatalog):
             "SJBPK.freq8-24Hz_maxdist3_coh9700_linkage_cluster.txt",
             "SJBPK.freq8-24Hz_maxdist3_coh9800_linkage_cluster.txt",
         ] = "SJBPK.freq8-24Hz_maxdist3_coh9500_linkage_cluster.txt",
-        
         dirname: str = "CRE_TAKAAKI_2022",
     ):
-        
+
         self.filename = default_catalogs_dir / dirname / filename
         super().__init__()
-    
-    @staticmethod    
+
+    @staticmethod
     def _deciyear_to_datetime(deciyear):
         """
         Converts decimal year to datetime.
@@ -289,25 +345,34 @@ class TakaAkiRepeaterCatalog(RepeaterCatalog):
                 "CSID",
                 "mag",
                 "slip_cm",
-            ]
+            ],
         )
 
-        df['time'] = [self._deciyear_to_datetime(idy) for idy in df["date"].values]
-        
+        df["time"] = [self._deciyear_to_datetime(idy) for idy in df["date"].values]
+
         # for simplicity and uniformity I apply interger family IDs to each family
-        id_map = {CSID: i for i, CSID in enumerate(df.CSID.unique())} 
+        id_map = {CSID: i for i, CSID in enumerate(df.CSID.unique())}
         df["family"] = [id_map[CSID] for CSID in df.CSID]
-        
-        df['NEV'] = df.groupby("family")['time'].transform(len)
-        df = df.loc[df['NEV']>1]
-        
-        COV_map = {family_ID: self.COV(df.time.loc[df.family==family_ID]) for family_ID in df.family.unique()}
-        df['COV'] = [COV_map[family_ID] for family_ID in df.family]
-        
-        RCm_map = {family_ID: self.characteristic_recurrence_interval(df.time.loc[df.family==family_ID]) for family_ID in df.family.unique()}
-        df['RCm'] = [RCm_map[family_ID] for family_ID in df.family]
-        
+
+        df["NEV"] = df.groupby("family")["time"].transform(len)
+        df = df.loc[df["NEV"] > 1]
+
+        COV_map = {
+            family_ID: self.COV(df.time.loc[df.family == family_ID])
+            for family_ID in df.family.unique()
+        }
+        df["COV"] = [COV_map[family_ID] for family_ID in df.family]
+
+        RCm_map = {
+            family_ID: self.characteristic_recurrence_interval(
+                df.time.loc[df.family == family_ID]
+            )
+            for family_ID in df.family.unique()
+        }
+        df["RCm"] = [RCm_map[family_ID] for family_ID in df.family]
+
         return df
+
 
 class SongRepeaterCatalog(EarthquakeCatalog):
     def __init__(
@@ -689,13 +754,20 @@ class RepeaterSequences:
             sequences.append(catalog)
 
         return sequences
+
+
 # %%
 
-if __name__ == '__main__':
-    
+if __name__ == "__main__":
+
     repeaters = TakaAkiRepeaterCatalog()
-    repeaters.catalog['number_of_events'] = repeaters.catalog.groupby("family")['date'].transform(len)
-    repeaters = repeaters.slice_by('number_of_events',10)
-    [repeaters.get_categorical_slice('family', int(i)).plot_time_series() for i in repeaters.catalog['family'].unique()[:10]]
-    
+    repeaters.catalog["number_of_events"] = repeaters.catalog.groupby("family")[
+        "date"
+    ].transform(len)
+    repeaters = repeaters.slice_by("number_of_events", 10)
+    [
+        repeaters.get_categorical_slice("family", int(i)).plot_time_series()
+        for i in repeaters.catalog["family"].unique()[:10]
+    ]
+
 # %%
