@@ -84,7 +84,6 @@ class Scaling:
         ) * unit_conversion_factor[out_unit]
 
 
-
 class Catalog:
     def __init__(
         self,
@@ -222,17 +221,19 @@ class Catalog:
 
     def get_categorical_slice(self, col_name: str, query: Union[str, list, np.ndarray]):
         new = copy.deepcopy(self)
-        
+
         if isinstance(query, int) or isinstance(query, str):
             in_category = self.catalog[col_name] == query
         elif isinstance(query, list) or isinstance(query, np.ndarray):
-            in_category = np.any(np.array([self.catalog[col_name] == q for q in query]), axis=0)
+            in_category = np.any(
+                np.array([self.catalog[col_name] == q for q in query]), axis=0
+            )
         else:
             raise ValueError
-        
+
         new.catalog = self.catalog.loc[in_category]
         new.__update__()
-        
+
         return new
 
     def get_time_slice(self, start_time, end_time):
@@ -326,20 +327,27 @@ class Catalog:
     ) -> Catalog:
         """returns a new catalog with the events in self within `buffer_radius_km` and `buffer_time_days` of each other"""
 
-        # For each event we get the indices of events in other that are within `buffer_radius_km` of it
         tree = BallTree(
-            np.deg2rad(self.catalog[["lat", "lon"]].values),
-            metric="haversine",
+            get_xyz_from_lonlat(
+                self.catalog.lon.values,
+                self.catalog.lat.values,
+                self.catalog.depth.values,
+            ),
+            metric="euclidean",
         )
-        
+
         if isinstance(other, np.ndarray):
             other_points = other
         else:
-            other_points = other.catalog[["lat", "lon"]].values
+            other_points = get_xyz_from_lonlat(
+                other.catalog.lon.values,
+                other.catalog.lat.values,
+                other.catalog.depth.values,
+            )
 
         indices = tree.query_radius(
-            np.deg2rad(other_points),
-            r=buffer_radius_km / EARTH_RADIUS_KM,
+            other_points,
+            r=buffer_radius_km,
             return_distance=False,
         )
 
@@ -386,23 +394,35 @@ class Catalog:
         """
 
         tree = BallTree(
-            np.deg2rad(other.catalog[["lat", "lon"]]),
-            metric="haversine",
+            get_xyz_from_lonlat(
+                other.catalog.lon.values,
+                other.catalog.lat.values,
+                other.catalog.depth.values,
+            ),
+            metric="euclidean",
         )
+
         if return_distances is True:
             I_in_radius, R = tree.query_radius(
-                np.deg2rad(self.catalog[["lat", "lon"]]),
-                r=buffer_radius_km / EARTH_RADIUS_KM,
+                get_xyz_from_lonlat(
+                    self.catalog.lon.values,
+                    self.catalog.lat.values,
+                    self.catalog.depth.values,
+                )
+                ,
+                r=buffer_radius_km,
                 return_distance=return_distances,
             )
-
-            R *= EARTH_RADIUS_KM
 
             OUTPUT = (I_in_radius, R)
 
         else:
             OUTPUT = tree.query_radius(
-                np.deg2rad(self.catalog[["lat", "lon"]]),
+                get_xyz_from_lonlat(
+                    self.catalog.lon.values,
+                    self.catalog.lat.values,
+                    self.catalog.depth.values,
+                ),
                 r=buffer_radius_km / EARTH_RADIUS_KM,
                 return_distance=return_distances,
             )
@@ -464,11 +484,11 @@ class Catalog:
         elif type == "hist":
             ax.hist(self.catalog["time"], bins=50)
             ax.set_yscale("log")
-            
+
         ax.set(
-            xlim = (self.start_time, self.end_time),
-            xlabel = "Time", 
-            ylabel = column, 
+            xlim=(self.start_time, self.end_time),
+            xlabel="Time",
+            ylabel=column,
         )
         axb = ax.twinx()
         sns.ecdfplot(self.catalog["time"], c="C1", stat="count", ax=axb)
@@ -646,7 +666,7 @@ class Catalog:
     def plot_base_map(
         self,
         extent: Optional[np.ndarray] = None,
-        usemap_proj = crs.PlateCarree(),
+        usemap_proj=crs.PlateCarree(),
         ax=None,
     ) -> plt.axes.Axes:
         if ax is None:
@@ -689,7 +709,7 @@ class Catalog:
             crs=usemap_proj,
         )
 
-        ax.add_feature(cartopy.feature.COASTLINE,lw=0.5, color="silver")
+        ax.add_feature(cartopy.feature.COASTLINE, lw=0.5, color="silver")
         ax.add_feature(cartopy.feature.LAND, color="whitesmoke")
         ax.add_feature(cartopy.feature.STATES, lw=0.5)  # Add state lines
 
@@ -704,7 +724,7 @@ class Catalog:
         scatter_kwarg: Optional[dict] = None,
         k_largest_events: Optional[int] = None,
         extent: Optional[np.ndarray] = None,
-        usemap_proj = crs.PlateCarree(),
+        usemap_proj=crs.PlateCarree(),
         ax=None,
     ) -> plt.axes.Axes:
         ax = self.plot_base_map(extent=extent, usemap_proj=usemap_proj, ax=ax)
