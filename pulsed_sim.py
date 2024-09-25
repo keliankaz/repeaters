@@ -67,7 +67,7 @@ class Stepper:
 class PulsedCoupledOscillator(Stepper):
     def __init__(
         self,
-        number_of_oscillators: Optional[np.ndarray] = 10,
+        number_of_oscillators: Optional[int] = 10,
         pulse_discharge: Union[float, np.ndarray] = 0.01,
         charge_rate: Union[float, np.ndarray] = 0.01,
         leakage_rate: Union[float, np.ndarray] = 0.007,
@@ -145,8 +145,8 @@ class PulsedCoupledOscillator(Stepper):
     @property
     def coupling(self):
         return (
-            self._coupling #* self.phase
-        )  # to emphasize potential phase dependence
+            self._coupling * np.abs(np.atleast_2d(self.phase) - np.atleast_2d(self.phase).T)/(2*np.pi)
+        ) # to emphasize potential phase dependence
 
     @property
     def dimensionless_coupling(self):
@@ -195,20 +195,19 @@ class PulsedCoupledOscillator(Stepper):
         
         count_cascade = 0
         
-        # while np.any(pulse):
+        while np.any(pulse): 
+            self.charge[pulse] = 0
+            self.charge += (
+                self.coupling @ np.vstack(pulse)
+            ).squeeze() * self.pulse_discharge
             
-        self.charge[pulse] = 0
-        self.charge += (
-            self.coupling @ np.vstack(pulse)
-        ).squeeze() * self.pulse_discharge
-        
-        pulse = self.charge > self.pulse_threshold
-        
-        count_cascade += 1
+            pulse = self.charge > self.pulse_threshold
             
-            # if count_cascade > 100:
-            #     print('Exiting casade of events, consider making time step shorter')
-            #     break 
+            count_cascade += 1
+                
+            if count_cascade > 100:
+                print('Exiting casade of events, consider making time step shorter')
+                break 
 
     def step(self, dt):
         self.step_charge(dt)
@@ -357,7 +356,7 @@ class Repeaters(SpatialPulsedOscillator):
         pulse_threshold: Optional[Union[float, np.ndarray]] = None,
         initial_slip: Optional[np.ndarray] = None,
         coupling: Optional[np.ndarray] = None,
-        strain_drop: float = 1e-2,
+        strain_drop: float = 0.0001,
     ):
 
         if sizes is None:
@@ -415,10 +414,15 @@ class Repeaters(SpatialPulsedOscillator):
         if state is None:
             state = self.get_state()
 
+        ax.set_xlim(self.fault_dimensions[0])
+        ax.set_ylim(self.fault_dimensions[1])
+        M = ax.transData.get_matrix()
+        xscale = M[0,0]
+
         ax.scatter(
             self.locations[:, 0],
             self.locations[:, 1],
-            s=self.sizes * 10 + 1 / (state["phase"] + 0.1),
+            s=(xscale*self.sizes)**2,
             c=state["phase"],
             cmap="inferno_r",
             vmin=0,
@@ -426,6 +430,7 @@ class Repeaters(SpatialPulsedOscillator):
         )
 
         ax.set_facecolor("midnightblue")
+        ax.set_aspect('equal')
 
         return ax
 
@@ -434,7 +439,7 @@ class Repeaters(SpatialPulsedOscillator):
         self,
         state: Optional[dict] = None,
         ax=None,
-        plot_type: Literal["plane view", "phase"] = "phase",
+        plot_type: Literal["plane view", "phase"] = "plane view",
     ):
         if ax is None:
             _, ax = plt.subplots()
