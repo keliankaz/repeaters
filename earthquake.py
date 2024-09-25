@@ -188,3 +188,27 @@ class EarthquakeCatalog(Catalog):
         df.depth = df.depth / 1000  # convert depth from m to km
 
         return df
+
+
+class WaldhauserEarthquakeCatalog(EarthquakeCatalog):
+    
+    def __init__(
+        self, 
+        filename: Optional[Union[str, Path]] = None,
+    ):
+        
+        self.filename = filename
+        self.catalog = self.read_catalog(self.filename)
+        
+        super().__init__(catalog=self.catalog)
+        
+        
+    def read_catalog(self,filename):
+        df = pd.read_csv(self.filename, skiprows=13)
+        df["time"] = pd.to_datetime(df["DateTime"])
+        df["mag"] = df["Magnitude"]
+        df["lat"] = df["Latitude"]
+        df["lon"] = df["Longitude"]
+        df["depth"] = df["Depth"]
+        
+        return df
