@@ -198,12 +198,12 @@ class WaldhauserEarthquakeCatalog(EarthquakeCatalog):
     ):
         
         self.filename = filename
-        self.catalog = self.read_catalog(self.filename)
+        self.catalog = self.read_catalog()
         
         super().__init__(catalog=self.catalog)
         
         
-    def read_catalog(self,filename):
+    def read_catalog(self):
         df = pd.read_csv(self.filename, skiprows=13)
         df["time"] = pd.to_datetime(df["DateTime"])
         df["mag"] = df["Magnitude"]
