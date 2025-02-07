@@ -811,5 +811,35 @@ class Catalog:
         """
         raise NotImplementedError
 
+    def get_nearest_neighbor_distance(self, other_catalog: pd.DataFrame) -> np.ndarray:
+        """
+        Returns the distance to the nearest neighbor for each event in the catalog in the other catalog.
+
+        Returns:
+            np.ndarray: An array of distances (in km) to the nearest neighbor for each event.
+        """
+        # Get the XYZ coordinates of all events
+        xyz_other = get_xyz_from_lonlat(
+            other_catalog.lon.values,
+            other_catalog.lat.values,
+            other_catalog.depth.values
+        )
+        
+        xyz = get_xyz_from_lonlat(
+            self.catalog.lon.values,
+            self.catalog.lat.values,
+            self.catalog.depth.values
+        )
+
+        # Create a BallTree for efficient nearest neighbor search
+        tree = BallTree(xyz, metric='euclidean')
+
+        # Query the tree for the distance to the nearest neighbor (excluding self)
+        # We use k=2 because the first nearest neighbor is the point itself
+        distances, _ = tree.query(xyz_other, k=1)
+
+        # Return the distance to the nearest neighbor (second column)
+        return distances 
+
 
 # %%
