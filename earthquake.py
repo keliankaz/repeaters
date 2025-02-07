@@ -188,7 +188,16 @@ class EarthquakeCatalog(Catalog):
         df.depth = df.depth / 1000  # convert depth from m to km
 
         return df
-
+    
+    def calculate_moment(self):
+        """
+        Calculates seismic moment for each earthquake in the catalog.
+        Uses the formula: M0 = 10^(1.5 * Mw + 9.1)
+        Where M0 is seismic moment in N·m and Mw is moment magnitude.
+        """
+        # Assuming 'mag' in the catalog is moment magnitude (Mw)
+        self.catalog['moment'] = 10 ** (1.5 * self.catalog['mag'] + 9.1)
+        return self.catalog['moment']
 
 class WaldhauserEarthquakeCatalog(EarthquakeCatalog):
     
